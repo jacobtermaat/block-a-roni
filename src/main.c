@@ -30,8 +30,10 @@ void enable_ports(void) {
     // Configure SPI pins (PB13 for SCK, PB15 for MOSI)
     GPIOB->MODER &= ~(GPIO_MODER_MODER13 | GPIO_MODER_MODER15);
     GPIOB->MODER |= GPIO_MODER_MODER13_1 | GPIO_MODER_MODER15_1; // Set as alternate function
-    GPIOB->AFR[1] |= (0x00 << 4); // Set alternate function for SCK
-    GPIOB->AFR[1] |= (0x00 << 12); // Set alternate function for MOSI
+    GPIOB->AFR[1] &= ~(0xF << 4); // Clear alternate function for SCK (PB13)
+    GPIOB->AFR[1] |= (0x0 << 4);  // Set AF0 for SCK
+    GPIOB->AFR[1] &= ~(0xF << 12); // Clear alternate function for MOSI (PB15)
+    GPIOB->AFR[1] |= (0x0 << 12);  // Set AF0 for MOSI
 }
 
 void init_spi(void) {
@@ -39,8 +41,8 @@ void init_spi(void) {
     RCC->APB1ENR |= RCC_APB1ENR_SPI2EN;
 
     // Configure SPI2 for master mode, prescaler, software slave management, and enable SPI
-    SPI2->CR1 = SPI_CR1_MSTR | SPI_CR1_BR_0 | SPI_CR1_SSM | SPI_CR1_SSI;
-    SPI2->CR1 |= SPI_CR1_SPE; // Enable SPI
+    SPI2->CR1 = SPI_CR1_MSTR | SPI_CR1_BR_0 | SPI_CR1_SSM | SPI_CR1_SSI | SPI_CR1_SPE;
+    SPI2->CR2 = SPI_CR2_FRXTH | SPI_CR2_DS_2 | SPI_CR2_DS_1 | SPI_CR2_DS_0; // 8-bit data frame
 }
 
 void tft_reset(void) {
@@ -54,11 +56,10 @@ void tft_reset(void) {
 void spi_write(uint8_t data) {
     // Wait until TXE (Transmit buffer empty) flag is set
     while (!(SPI2->SR & SPI_SR_TXE));
-    SPI2->DR = data;
+    *(volatile uint8_t *)&SPI2->DR = data; // Write data to SPI data register
 
     // Wait for transmission to complete
     while (SPI2->SR & SPI_SR_BSY);
-    for (volatile int i = 0; i < 10; i++); // Small delay
 }
 
 void tft_send_command(uint8_t cmd) {
@@ -117,7 +118,6 @@ void tft_init(void) {
     tft_send_command(0x3A); // Set color format
     tft_send_data(0x55);    // 16-bit color (RGB565)
 
-    // Additional commands (based on common TFT initializations)
     tft_send_command(0x36); // Memory Access Control
     tft_send_data(0x48);    // Row/column addressing, RGB order
 
@@ -134,9 +134,11 @@ int main(void) {
     for (volatile int i = 0; i < 1000000; i++); // Delay
     tft_fill_screen(RGB565(0, 255, 0)); // Fill with green
     for (volatile int i = 0; i < 1000000; i++); // Delay
-    tft_fill_screen(RGB565(0, 0, 255));
+    tft_fill_screen(RGB565(0, 0, 255)); // Fill with blue
 
     while (1) {
         // Loop infinitely - nothing else needs to be done here
     }
 }
+
+
