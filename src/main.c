@@ -1,21 +1,16 @@
 #include "stm32f0xx.h"
-// #include <stdio.h>
-// #include <stdint.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <time.h>
 
 // Define the TFT width and height
 #define TFT_WIDTH  240
 #define TFT_HEIGHT 320
-int16_t gameScore          = 0;
-int16_t currentLevel          = 0;
 
-void nano_wait(unsigned int n);
-void playSound(void);
-void play_note(int freq, int duration);
-void update_game_speed(int level);
-void updateGameScoreBuffer(int score);
-void init_spi1(void);
-void spi1_setup_dma(void);
-void spi1_enable_dma(void);
+#define BLOCK_SIZE 20      // Size of the block (width and height in pixels)
+#define BACKGROUND_COLOR RGB565(0, 0, 0)  // Background color (black)
+#define BLOCK_COLOR RGB565(255, 0, 0)
 
 // Define color format for 16-bit RGB565
 #define RGB565(r, g, b) (((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3))
@@ -32,7 +27,6 @@ void enable_ports(void) {
     // Enable GPIOA and GPIOB for control pins and SPI
     RCC->AHBENR |= RCC_AHBENR_GPIOAEN | RCC_AHBENR_GPIOBEN;
 
-
     // Configure GPIOB0 as CS (output)
     GPIOB->MODER &= ~GPIO_MODER_MODER0;
     GPIOB->MODER |= GPIO_MODER_MODER0_0;
@@ -48,15 +42,6 @@ void enable_ports(void) {
     GPIOB->AFR[1] |= (0x0 << 4);  // Set AF0 for SCK
     GPIOB->AFR[1] &= ~(0xF << 12); // Clear alternate function for MOSI (PB15)
     GPIOB->AFR[1] |= (0x0 << 12);  // Set AF0 for MOSI
-
-
-    //Set PB4 for Alternative function for PWM
-    GPIOB -> MODER &= 0xfffffcff;
-    GPIOB -> MODER |= 0x00000200;
-    GPIOB-> AFR[0] &= ~0x000f0000;
-    GPIOB-> AFR[0] |= 0x00010000; //Set Tim3 for AF1
-
-
 }
 
 void init_spi(void) {
@@ -147,240 +132,241 @@ void tft_init(void) {
     tft_send_command(0x29); // Display ON
 }
 
+void tft_update_area(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t color) {
+    // Set the address window for the specified area
+    tft_set_address_window(x0, y0, x1, y1);
 
+    // Calculate the number of pixels to fill
+    uint32_t pixel_count = (x1 - x0 + 1) * (y1 - y0 + 1);
 
-// //Nathan's section
+    // Set to data mode and start filling pixels in the specified area
+    TFT_DC_HIGH();
+    TFT_CS_LOW();
+    for (uint32_t i = 0; i < pixel_count; i++) {
+        spi_write(color >> 8);     // Send high byte of color
+        spi_write(color & 0xFF);   // Send low byte of color
+    }
+    TFT_CS_HIGH();
+}
 
-const char font[] = {
-    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-    0x00, // 32: space
-    0x86, // 33: exclamation
-    0x22, // 34: double quote
-    0x76, // 35: octothorpe
-    0x00, // dollar
-    0x00, // percent
-    0x00, // ampersand
-    0x20, // 39: single quote
-    0x39, // 40: open paren
-    0x0f, // 41: close paren
-    0x49, // 42: asterisk
-    0x00, // plus
-    0x10, // 44: comma
-    0x40, // 45: minus
-    0x80, // 46: period
-    0x00, // slash
-    // digits
-    0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x67,
-    // seven unknown
-    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-    // Uppercase
-    0x77, 0x7c, 0x39, 0x5e, 0x79, 0x71, 0x6f, 0x76, 0x30, 0x1e, 0x00, 0x38, 0x00,
-    0x37, 0x3f, 0x73, 0x7b, 0x31, 0x6d, 0x78, 0x3e, 0x00, 0x00, 0x00, 0x6e, 0x00,
-    0x39, // 91: open square bracket
-    0x00, // backslash
-    0x0f, // 93: close square bracket
-    0x00, // circumflex
-    0x08, // 95: underscore
-    0x20, // 96: backquote
-    // Lowercase
-    0x5f, 0x7c, 0x58, 0x5e, 0x79, 0x71, 0x6f, 0x74, 0x10, 0x0e, 0x00, 0x30, 0x00,
-    0x54, 0x5c, 0x73, 0x7b, 0x50, 0x6d, 0x78, 0x1c, 0x00, 0x00, 0x00, 0x6e, 0x00
-};
+void update_screen(int currentState[10][13]){
+    for (int j = 0; j < 13; j++){
+        for (int i = 0; i < 10; i++){
+            if(currentState[i][j] == 1){
+                tft_update_area(i * 24, j * 24, (i + 1) * 24 - 1, (j + 1) * 24 - 1, RGB565(255, 255, 255));
+            }else{
+                // tft_update_area(i * 24, j * 24, (i + 1) * 24 - 1, (j + 1) * 24 - 1, RGB565(0, 0, 0));
+            }
+        }
+    }
+}
 
-uint8_t gameScoreBuffer[8];  // Buffer for DMA transfer to SPI
-
-// 7-segment encoding table for digits 0-9
-// Example encoding: 0x3F for "0", 0x06 for "1", etc.
-const uint8_t segmentEncoding[10] = {
-    0x3F,  // 0
-    0x06,  // 1
-    0x5B,  // 2
-    0x4F,  // 3
-    0x66,  // 4
-    0x6D,  // 5
-    0x7D,  // 6
-    0x07,  // 7
-    0x7F,  // 8
-    0x6F   // 9
-};
-
-void updateGameScoreBuffer(int score) {
-    //Convert score to an 8-digit representation, e.g., "00000019"
-//     for (int i = 7; i >= 0; i--) {
-//         int digit = score % 10;                 // Extract the last digit
-//         gameScoreBuffer[i] = segmentEncoding[digit];  // Convert to 7-segment encoding
-//         score /= 10;                            // Move to the next digit
+// void shiftDownPieces(int currentState[10][13]){
+//     for (int j = 1; j < 13; j++){
+//         for (int i = 0; i < 10; i++){
+//             if(currentState[i][j] == 1 && currentState[i][j-1] == 0){
+//                 currentState[i][j] = 0;
+//                 currentState[i][j-1] = 1;
+//                 tft_update_area(i * 24, j * 24, (i + 1) * 24 - 1, (j + 1) * 24 - 1, RGB565(0, 0, 0));
+//                 tft_update_area(i * 24, (j-1) * 24, (i + 1) * 24 - 1, j * 24 - 1, RGB565(255, 255, 255));
+//             }
+//         }
 //     }
-        // gameScoreBuffer[0] &= 0x00;
-        // gameScoreBuffer[1] &= 0x00;
-        // gameScoreBuffer[2] &= 0x00;
-        // gameScoreBuffer[3] &= 0x00;
-        gameScoreBuffer[0] |= font['1'];
-        gameScoreBuffer[1] |= font['5'];
-        gameScoreBuffer[2] |= font['4'];
-        gameScoreBuffer[3] |= font['3'];
-        gameScoreBuffer[4] |= font['2'];
-        gameScoreBuffer[5] |= font['2'];
-        gameScoreBuffer[6] |= font['9'];
-        gameScoreBuffer[7] |= font['1'];
- }
+// }
 
-void init_spi1(void) {
-     RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
-        GPIOA -> MODER &= ~0xc000cc00;
-        GPIOA->MODER |= 0x80008800;// << (4*6); //Set 5, 7, 15 to alternative function
-        GPIOA -> AFR[1] &= ~0xf0000000;
-        GPIOA -> AFR[0] &= ~0xf0f00000;
-        RCC -> APB2ENR |= RCC_APB2ENR_SPI1EN;
-    SPI1 -> CR1 &= ~(0x1 << 6);
-    // Set the baud rate as low as possible (maximum divisor for BR).
-    SPI1 -> CR1 |= 0x7 << 3; //For bits 3-5 = 1
-// Configure the interface for a 8-bit word size.
-    SPI1->CR2 = (0x7 << 8); // Set 11-8 to 1001
-// Configure the SPI channel to be in "master configuration".
-    SPI1 -> CR1 |= 0x1 << 2; //Set bit 2 to 1
-// Set the SS Output enable bit and enable NSSP.
-    SPI1 -> CR2 |= 0x3 << 2; //Set 2nd and 3rd bit to 1
-// Set the TXDMAEN bit to enable DMA transfers on transmit buffer empty
-    SPI1 -> CR2 |= 0x1 << 1; // Set 1st bit to 1
-// Enable the SPI channel.
-    SPI1 -> CR1 |= 0x1 << 6; //Set bit 6 to 1
-
-}
-
-void spi1_setup_dma(void) {
-    
-    //Turn off enable
-    DMA1_Channel3 -> CCR &= ~DMA_CCR_EN;
-    //0xfffffffe
-
-    //Activate
-    RCC -> AHBENR |= RCC_AHBENR_DMA1EN;
-    //CMAR
-    DMA1_Channel3 -> CMAR = (uint32_t) &gameScoreBuffer;
-    //CPAR
-    DMA1_Channel3 -> CPAR = (uint32_t) &(SPI1->DR);
-    //CNDTR
-    DMA1_Channel3 -> CNDTR = 8;
-    //DIR
-     DMA1_Channel3 -> CCR |= DMA_CCR_DIR;//page 209 manual
-    //0x00000010
-
-    //MINC
-    DMA1_Channel3 -> CCR |= DMA_CCR_MINC;
-    //0x00000080
-
-    //Memory size
-    DMA1_Channel3 -> CCR |= DMA_CCR_MSIZE_0;
-    //0x00000400
-
-    //P datum
-    DMA1_Channel3 -> CCR |= DMA_CCR_PSIZE_0;
-    //0x00000100
-
-    //Circular mode
-
-    DMA1_Channel3 -> CCR |= DMA_CCR_CIRC;
-    //0x00000020
-
-    SPI1 -> CR2 |= 0x1 << 1; //Sets bit 1
-
-
-
-}
-
-
-
-//===========================================================================
-// Enable the DMA channel.
-//===========================================================================
-void spi1_enable_dma(void) {
-    DMA1_Channel3 -> CCR |= 0x00000001;
-}
-
-void nano_wait(unsigned int n) {
-    asm(    "        mov r0,%0\n"
-            "repeat: sub r0,#83\n"
-            "        bgt repeat\n" : : "r"(n) : "r0", "cc");
-}
-
-void TIM7_IRQHandler(void)
-{
-  TIM7->SR &= ~TIM_SR_UIF;
-  gameScore++;
-  updateGameScoreBuffer(gameScore);
-  if(gameScore == 1000)
-  {
-    TIM7->CR1 &= ~TIM_CR1_CEN; //Stop main game system
-    currentLevel++;
-    update_game_speed(currentLevel);
-    playSound();
-    TIM7->CR1 |= TIM_CR1_CEN; //Resume timing system
-
-  }
-}
-
-void playSound() {
-    play_note(440, 0.2);
-    play_note(580, 0.1);
-    nano_wait(50000);
-    play_note(440, 0.2);
-    play_note(600, 2);
-}
-
-void play_note(int freq, int duration){  //MAKE SURE THE JACK IS ASSOSIATED WITH CCR3, change accordingly if not
-    //PB4 AF1 = Timer 3 channel 1
-    TIM3->CR1 &= ~TIM_CR1_CEN;
-
-    // Calculate the ARR and CCR3 values based on the desired frequency
-    int arr_value = (48000000 / freq) - 1;
-    // TIM7 -> PSC = 24000 - 1;
-    // TIM7 -> ARR = 2 - 1;
-    TIM3->ARR = arr_value;
-    TIM3 -> CCMR1 &= 0xff8f;
-    TIM3 -> CCMR1 |= 0x0060; //PWM mode 1 for channel 1
-    TIM3 -> CCER |= TIM_CCER_CC1E; //Enable CCR channel
-    TIM3->CR1 |= TIM_CR1_CEN; //Enable timer
-    TIM3->CCR1 = (arr_value + 1) / 2;  // 50% duty cycle for a balanced square wave
-
-    // Wait for the duration
-    nano_wait(duration* 1000000);
-
-    // Stop the PWM after the duration
-    TIM3->CR1 &= ~TIM_CR1_CEN;
-}
-
-
-
-void setup_tim7() { //Sets up our main gametiming system
-  
-  RCC->APB1ENR |= RCC_APB1ENR_TIM7EN;
-   
-  TIM7 -> PSC = 2400000 - 1;
-  TIM7 -> ARR = 2 - 1;
-
-  TIM7->DIER |= TIM_DIER_UIE;
-
-  NVIC -> ISER[0] = 1 << TIM7_IRQn;
-
-  TIM7 -> CR1 |= TIM_CR1_CEN;
-}
-
-void update_game_speed(int level) {  //Updtes the game speed
-    
-    if (level == 1) {
-        TIM7->PSC = 24000 - 1;  // Example values for level 1
-        TIM7->ARR = 2 - 1;
+void shiftDownPieces(int currentState[10][13]){
+    for (int j = 1; j < 13; j++){
+        for (int i = 0; i < 10; i++){
+            if(currentState[i][j] == 1){
+                currentState[i][j] = 0;
+                currentState[i][j-1] = 1;
+                tft_update_area(i * 24, j * 24, (i + 1) * 24 - 1, (j + 1) * 24 - 1, RGB565(0, 0, 0));
+                tft_update_area(i * 24, (j-1) * 24, (i + 1) * 24 - 1, j * 24 - 1, RGB565(255, 255, 255));
+            }
+        }
     }
-    else if (level ==2) {
-        TIM7->PSC = 12000 - 1;  // Higher frequency by reducing PSC
-        TIM7->ARR = 2 - 1;
+}
+
+void shiftPiecesSideways(int currentState[10][13], int left, int right){
+    if(right == 1){
+        for (int j = 0; j < 13; j++){
+            for (int i = 0; i < 10; i++){
+                if(currentState[i][j] == 1){
+                    currentState[i][j] = 0;
+                    currentState[i-1][j] = 1;
+                    tft_update_area(i * 24, j * 24, (i + 1) * 24 - 1, (j + 1) * 24 - 1, RGB565(0, 0, 0));
+                    //tft_update_area(i-1 * 24, j * 24, (i) * 24 - 1, (j + 1) * 24 - 1, RGB565(255, 255, 255));
+                }
+            }
+        }
+    }
+    if(left == 1){
+        for (int j = 0; j < 13; j++){
+            for (int i = 9; i >= 0; i--){
+                if(currentState[i][j] == 1){
+                    currentState[i][j] = 0;
+                    currentState[i+1][j] = 1;
+                    tft_update_area(i * 24, j * 24, (i + 1) * 24 - 1, (j + 1) * 24 - 1, RGB565(0, 0, 0));
+                    //tft_update_area(i-1 * 24, j * 24, (i) * 24 - 1, (j + 1) * 24 - 1, RGB565(255, 255, 255));
+                }
+            }
+        }
+    }
+}
+
+void mergePieces(int floorBlocks[10][13], int currentPieces[10][13], int *r){
+    for (int j = 0; j < 13; j++){
+        for (int i = 0; i < 10; i++){
+            if(currentPieces[i][j] == 1){
+                floorBlocks[i][j] = 1;
+                currentPieces[i][j] = 0;
+            }
+        }
+    }
+    if(*r == 0){
+        currentPieces[5][12] = 1;
+        currentPieces[5][11] = 1;
+        currentPieces[4][12] = 1;
+        currentPieces[4][11] = 1;
+    }else if(*r == 1){  
+        currentPieces[4][12] = 1;
+        currentPieces[4][11] = 1;
+        currentPieces[4][10] = 1;
+        currentPieces[4][9] = 1;
+    }else if(*r == 2){
+        currentPieces[6][12] = 1;
+        currentPieces[5][12] = 1;
+        currentPieces[4][12] = 1;
+        currentPieces[5][11] = 1;
+    }else if(*r == 3){
+        currentPieces[4][12] = 1;
+        currentPieces[4][11] = 1;
+        currentPieces[4][10] = 1;
+        currentPieces[5][10] = 1;
+    }else if(*r == 4){
+        currentPieces[5][12] = 1;
+        currentPieces[5][11] = 1;
+        currentPieces[4][11] = 1;
+        currentPieces[4][10] = 1;
+    }
+}
+
+int runGameUpdate(int left, int right, int floorBlocks[10][13], int currentPieces[10][13], int *r){
+    //Line is full and to be cleared.
+    int count = 0;
+    int rowFill;
+    for (int j = 0; j < 13; j++){
+        rowFill = 1;
+        for (int i = 0; i < 10; i++){
+            if(floorBlocks[i][j] == 0){
+                i = 10;
+                rowFill = 0;
+            }
+        }
+        if(rowFill == 1){
+            for (int i = 0; i < 10; i++){
+                floorBlocks[i][j] = 0;
+            }
+            tft_update_area(0, 24*j, 239, 24*(j+1)-1, RGB565(0,0,0));
+            count++;
+        }
+    }
+    for (int i = 0; i < count; i++){
+        shiftDownPieces(floorBlocks);
     }
 
+    int canMoveSideways = 1;
+    int canMoveDown = 1;
+
+    for (int j = 0; j < 13; j++){
+        for (int i = 0; i < 10; i++){
+            if(currentPieces[i][j] == 1){
+                if((j - 1 < 0) | (floorBlocks[i][j-1] == 1)){
+                    canMoveDown = 0;
+                }if(i == 9 && left == 1){
+                    canMoveSideways = 0;
+                } else if((i + left > 9) | (i-right < 0) | (floorBlocks[i+left-right][j-1] == 1)){
+                    canMoveSideways = 0;
+                }
+            }
+        }
+    }
+
+    // for (int j = 0; j < 13; j++){
+    //     for (int i = 0; i < 10; i++){
+    //         if(currentPieces[i][j] == 1){
+    //             if(rowOne == 1){
+    //                 checkRowOne = j;
+    //                 rowOne = 0;
+    //             }
+    //             if(checkRowOne == j){
+    //                 if((i+left > 9) | (i-right < 0) | (floorBlocks[i+left-right][j-1] == 1)){
+    //                     canMoveSideways = 0;
+    //                 }
+    //                 if((j - 1 < 0) | (floorBlocks[i][j-1] == 1)){
+    //                     canMoveDown = 0;
+    //                 }
+    //             }else{
+    //                 if((i+left > 9) | (i-right < 0) | (floorBlocks[i+left-right][j-1] == 1)){
+    //                     canMoveSideways = 0;
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    int endGame = 0;
+    if(canMoveDown == 1){
+        shiftDownPieces(currentPieces);
+    }else{
+        if(*r == 4){
+            *r = 0;
+        }else{
+            *r = *r + 1;
+        }
+        mergePieces(floorBlocks, currentPieces, r);
+        for(int i = 0; i < 10; i++){
+            if(floorBlocks[i][12] == 1){
+                endGame = 1;
+            }
+        }
+    }
+    if(canMoveSideways == 1){
+        shiftPiecesSideways(currentPieces, left, right);
+    }
+    update_screen(currentPieces);
+    return endGame;
+
+    // int stop = 0;
+    // int canMoveDown = 1;
+    // for (int j = 0; j < 13; j++){
+    //     for (int i = 0; i < 10; i++){
+    //         if(currentPieces[i][j] == 1){
+    //             stop = 1;
+    //             if(j - 1 < 0 | floorBlocks[i][j-1] == 1){
+    //                 canMoveDown = 0;
+    //             }
+    //         }
+    //     }
+    //     if(stop == 1){
+    //         j = 13;
+    //     }
+    // }
+    // if(canMoveDown == 1){
+    //     shiftDownPieces(currentPieces);
+    //     update_screen(currentPieces);
+    // }
+
+
+
+
+
+    //Check if piece can fall, if can fall check right and left based on input.
+    // - Check if piece array intersects boundaries or the floor blocks
+    // - - If array intersects with floor merge the current piece via adding
+    // - - Make new piece appear in array
+    // - Update the screen such that piece and floor are showing
 }
+
 
 int main(void) {
     enable_ports();    // Enable GPIO ports for control pins
@@ -393,25 +379,110 @@ int main(void) {
     // tft_fill_screen(RGB565(0, 255, 0)); // Fill with green
     // for (volatile int i = 0; i < 1000000; i++); // Delay
     // tft_fill_screen(RGB565(0, 0, 255)); // Fill with blue
+    // for (volatile int i = 0; i < 1000000; i++); // Delay
+    tft_fill_screen(RGB565(0, 0, 0));
+    // tft_update_area(0, 0, 47, 47, RGB565(255, 0, 0));
+    // tft_update_area(48, 0, 95, 47, RGB565(0, 0, 255));
+    // tft_update_area(96, 0, 143, 47, RGB565(0, 255, 255));
+    // int current_state[10][13] = {
+    //     {1,0,1,0,1,0,1,0,1,0,1,0,1},
+    //     {0,1,0,1,0,1,0,1,0,1,0,1,0},
+    //     {1,0,1,0,1,0,1,0,1,0,1,0,1},
+    //     {0,1,0,1,0,1,0,1,0,1,0,1,0},
+    //     {1,0,1,0,1,0,1,0,1,0,1,0,1},
+    //     {0,1,0,1,0,1,0,1,0,1,0,1,0},
+    //     {1,0,1,0,1,0,1,0,1,0,1,0,1},
+    //     {0,1,0,1,0,1,0,1,0,1,0,1,0},
+    //     {1,0,1,0,1,0,1,0,1,0,1,0,1},
+    //     {0,1,0,1,0,1,0,1,0,1,0,1,0}
+    // };
+    int floorBlocks[10][13] = {
+        {0},
+        {0},
+        {1},
+        {1},
+        {1},
+        {1},
+        {1,1,1,1,},
+        {1,1},
+        {1,1},
+        {1}
+    };
+    int currentPiece[10][13] = {
+        {0},
+        {0},
+        {0},
+        {0},
+        {0,0,0,0,0,0,0,0,0,0,1,1,1},
+        {0,0,0,0,0,0,0,0,0,0,1},
+        {0},
+        {0},
+        {0},
+        {0}
+    };
+    int r = 0;
+    update_screen(floorBlocks);
+    update_screen(currentPiece);
+    // shiftDownPieces(current_state);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    for (volatile int i = 0; i < 1000000; i++); // Delay
+    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    for (volatile int i = 0; i < 1000000; i++); // Delay
+    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    for (volatile int i = 0; i < 1000000; i++); // Delay
+    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    for (volatile int i = 0; i < 1000000; i++); // Delay
+    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    for (volatile int i = 0; i < 1000000; i++); // Delay
+    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
 
-    // gameScoreBuffer[0] |= font['6'];
-    // gameScoreBuffer[1] |= font['5'];
-    // gameScoreBuffer[2] |= font['4'];
-    // gameScoreBuffer[3] |= font['3'];
-    // gameScoreBuffer[4] |= font['2'];
-    // gameScoreBuffer[5] |= font['2'];
-    // gameScoreBuffer[6] |= font['9'];
-    // gameScoreBuffer[7] |= font['1'];
 
-    init_spi1();
-    setup_tim7();
-    spi1_setup_dma();
-    spi1_enable_dma();
+
+    
+    // runGameUpdate(0,0,floorBlocks, currentPiece);
+    // runGameUpdate(0,0,floorBlocks, currentPiece);
+    // runGameUpdate(0,0,floorBlocks, currentPiece);
+    // runGameUpdate(0,0,floorBlocks, currentPiece);
+    //int floorBlocks[10][13];
+    // runGameUpdate(1,0,floorBlocks,currentPiece);
+    
 
 
     while (1) {
         // Loop infinitely - nothing else needs to be done here
     }
 }
+
 
 
