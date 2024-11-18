@@ -430,14 +430,14 @@
     int floorBlocks[10][13] = {
         {0},
         {0},
-        {1},
-        {1},
-        {1},
-        {1},
-        {1,1,1,1,},
-        {1,1},
-        {1,1},
-        {1}
+        {0},
+        {0},
+        {0},
+        {0},
+        {0},
+        {0},
+        {0},
+        {0}
     };
     int currentPiece[10][13] = {
         {0},
@@ -664,10 +664,10 @@ void mergePieces(int floorBlocks[10][13], int currentPieces[10][13], int *r){
         currentPieces[4][10] = 1;
         currentPieces[4][9] = 1;
     }else if(*r == 2){
-        currentPieces[6][12] = 1;
-        currentPieces[5][12] = 1;
-        currentPieces[4][12] = 1;
+        currentPieces[6][11] = 1;
         currentPieces[5][11] = 1;
+        currentPieces[4][11] = 1;
+        currentPieces[5][12] = 1;
     }else if(*r == 3){
         currentPieces[4][12] = 1;
         currentPieces[4][11] = 1;
@@ -920,7 +920,7 @@ void TIM7_IRQHandler(void)
     snprintf(curScore, 9, "%8d", scoree);
     print(curScore);
     // set_freq(0, 10000);
-    if(scoree % 50 == 0)
+    if(scoree % 100 == 0)
     {
         TIM7->CR1 &= ~TIM_CR1_CEN; //Stop main game system
         // nano_wait(500000000);
@@ -933,10 +933,10 @@ void TIM7_IRQHandler(void)
         nano_wait(1000000000 / 4);
         snprintf(curScore, 9, "%8s", "UP      ");
         print(curScore);
-        nano_wait(1000000000 /2);
+        nano_wait(1000000000 /4);
         currentLevel++;
         update_game_speed(currentLevel);
-        //playSound();
+        playSound();
         TIM7->CR1 |= TIM_CR1_CEN; //Resume timing system
 
     }
@@ -966,33 +966,26 @@ void update_game_speed(int level) {  //Updtes the game speed
     
     if (level == 1) {
         TIM7->PSC = 24000 - 1;  // Example values for level 1
-        TIM7 -> ARR = 80 - 1;
+        TIM7 -> ARR = 500 - 1;
     }
     else if(level == 2)
     {
         TIM7->PSC = 24000 - 1;  // Example values for level 1
-        TIM7 -> ARR = 60 - 1;
+        TIM7 -> ARR = 100 - 1;
     }
     else {
         TIM7->PSC = 24000 - 1;  // Higher frequency by reducing PSC
-        TIM7->ARR = 40 - 1;
+        TIM7->ARR = 60 - 1;
     }
 
 }
 
 
 void playSound() {
+    TIM1 -> CR1 |= TIM_CR1_CEN;
     set_freq(0, 400);
-    nano_wait(50000000); // Use a timer-based delay for better consistency
-    set_freq(0, 600);
-    nano_wait(50000000);
-    set_freq(0, 900);
-    nano_wait(50000000);
-    set_freq(0, 440);
-    nano_wait(50000000);
-    set_freq(0, 600);
-    nano_wait(50000000);
-    set_freq(0, 0); // Ensure sound is stopped after playing
+    nano_wait(200000000); // Use a timer-based delay for better consistency
+    TIM1 -> CR1 &= ~TIM_CR1_CEN;
 }
 
 
@@ -1034,7 +1027,7 @@ void setup_tim1(void) {
     TIM1 -> CCER |= TIM_CCER_CC3E | TIM_CCER_CC4E | TIM_CCER_CC2E | TIM_CCER_CC1E;
 
     //enable timer
-    TIM1 -> CR1 |= TIM_CR1_CEN;
+    //TIM1 -> CR1 |= TIM_CR1_CEN;
 
 
 
@@ -1050,7 +1043,7 @@ void setup_tim1(void) {
 
 
 // Part 3: Analog-to-digital conversion for a volume level.
-uint32_t volume = 2400;
+uint32_t volume = 1200;
 
 // Variables for boxcar averaging.
 #define BCSIZE 32
@@ -1282,7 +1275,9 @@ int main(void) {
     drive_column(0);
     init_tim6();
 
-    setup_tim1();    
+    setup_tim1(); 
+   //TIM1 -> CR1 |= TIM_CR1_CEN;
+    //set_freq(0, 400);   
 
 
     while (1) {
