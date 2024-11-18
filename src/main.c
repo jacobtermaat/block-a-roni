@@ -405,7 +405,6 @@
 #include <stdio.h>
 #include <time.h>
 
-
 // Define the TFT width and height
 #define TFT_WIDTH  240
 #define TFT_HEIGHT 320
@@ -884,4 +883,11 @@ int main(void) {
     while (1) {
         // Loop infinitely - nothing else needs to be done here
     }
+<<<<<<< HEAD
 }
+=======
+}
+
+
+
+>>>>>>> 529c888641e6ef64823b91c74cdc69b383d6c7d8
