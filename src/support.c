@@ -94,67 +94,153 @@ void clear_display(void) {
     }
 }
 // 16 history bytes.  Each byte represents the last 8 samples of a button.
-uint8_t hist[16];
-char queue[2];  // A two-entry queue of button press/release events.
-int qin;        // Which queue entry is next for input
-int qout;       // Which queue entry is next for output
+// uint8_t hist[16];
+// char queue[2];  // A two-entry queue of button press/release events.
+// int qin;        // Which queue entry is next for input
+// int qout;       // Which queue entry is next for output
 
-const char keymap[] = "DCBA#9630852*741";
+// const char keymap[] = "DCBA#9630852*741";
 
-void push_queue(int n) {
-    queue[qin] = n;
-    qin ^= 1;
+// void push_queue(int n) {
+//     queue[qin] = n;
+//     qin ^= 1;
+// }
+
+// char pop_queue() {
+//     char tmp = queue[qout];
+//     queue[qout] = 0;
+//     qout ^= 1;
+//     return tmp;
+// }
+
+// void update_history(int c, int rows)
+// {
+//     // We used to make students do this in assembly language.
+//     for(int i = 0; i < 4; i++) {
+//         hist[i] = (hist[i]<<1) + ((rows>>i)&1);
+//         if (hist[i] == 0x01)
+//             push_queue(0x80 | keymap[4*c+i]);
+//         if (hist[i] == 0xfe)
+//             push_queue(keymap[4*c+i]);
+//     }
+// }
+
+// void drive_column(int c)
+// {
+//     GPIOC->BSRR = 0xf00000 | ~(1 << (c + 4));
+// }
+
+// int read_rows()
+// {
+//     return (~GPIOC->IDR) & 0xf;
+// }
+
+// char get_key_event(void) {
+//     for(;;) {
+//         asm volatile ("wfi");   // wait for an interrupt
+//         if (queue[qout] != 0)
+//             break;
+//     }
+//     return pop_queue();
+// }
+
+// char get_keypress() {
+//     char event;
+//     for(;;) {
+//         // Wait for every button event...
+//         event = get_key_event();
+//         // ...but ignore if it's a release.
+//         if (event & 0x80)
+//             break;
+//     }
+//     return event & 0x7f;
+// }
+void drive_column(int c) {
+    GPIOC -> BSRR |= 0x00f00000;
+    int trueCol = (c &= 0x3);
+    GPIOC -> BSRR |= 1 << (4 + trueCol);
+    //then set the bits corresponding to the column `c`
 }
 
-char pop_queue() {
-    char tmp = queue[qout];
-    queue[qout] = 0;
-    qout ^= 1;
-    return tmp;
+
+/**
+ * @brief Read the rows value of the keypad
+ * 
+ * @return int 
+ */
+int read_rows() {
+  int temp = GPIOC -> IDR & 0xF;
+  return temp;
 }
 
-void update_history(int c, int rows)
-{
-    // We used to make students do this in assembly language.
-    for(int i = 0; i < 4; i++) {
-        hist[4*c+i] = (hist[4*c+i]<<1) + ((rows>>i)&1);
-        if (hist[4*c+i] == 0x01)
-            push_queue(0x80 | keymap[4*c+i]);
-        if (hist[4*c+i] == 0xfe)
-            push_queue(keymap[4*c+i]);
+/**
+ * @brief Convert the pressed key to character
+ *        Use the rows value and the current `col`
+ *        being scanning to compute an offset into
+ *        the character map array
+ * 
+ * @param rows 
+ * @return char 
+ */
+
+char* keymap_arr = "DCBA#9630852*741";
+
+char rows_to_key(int rows) {
+    int currCol = 0;
+    int offset = 0;
+    // Note `rows` will be a 4 bit value from reading the IDR register of the row pins of the keypad
+    if((rows & 0x1))
+    {
+      offset = currCol * 4 + 0;
+    }
+    else if((rows & 0x2))
+    {
+      offset = currCol * 4 + 1;
+    }
+    else if((rows & 0x4))
+    {
+      offset = currCol * 4 + 2;
+    }
+    else if((rows & 0x8))
+    {
+      offset = currCol * 4 + 3;
+    }
+    //lookup `c` in the `keymap_arr` indexed by the offset
+    return keymap_arr[offset];
+    //return c;
+}
+
+/**
+ * @brief Handle key pressed in the game
+ * 
+ * @param key 
+ */
+void handle_key(char key, int* left, int* right) {
+    if (key == 'D'){
+      *left = 1;
+      *right = 0;
+    } 
+    else if (key == 'A')
+    {
+      *right = 1;
+      *left = 0;
+    }
+    else
+    {
+        *right = 0;
+        *left = 0;
     }
 }
 
-void drive_column(int c)
-{
-    GPIOC->BSRR = 0xf00000 | ~(1 << (c + 4));
-}
+//-------------------------------
+// Timer 7 ISR goes here
 
-int read_rows()
-{
-    return (~GPIOC->IDR) & 0xf;
-}
-
-char get_key_event(void) {
-    for(;;) {
-        asm volatile ("wfi");   // wait for an interrupt
-        if (queue[qout] != 0)
-            break;
-    }
-    return pop_queue();
-}
-
-char get_keypress() {
-    char event;
-    for(;;) {
-        // Wait for every button event...
-        event = get_key_event();
-        // ...but ignore if it's a release.
-        if (event & 0x80)
-            break;
-    }
-    return event & 0x7f;
-}
+// void TIM7_IRQHandler(void)
+// {
+//   TIM7->SR &= ~TIM_SR_UIF;
+  
+//   int curCol = 0;
+// }
 
 
 // Turn on the dot of the rightmost display element.

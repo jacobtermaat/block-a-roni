@@ -811,28 +811,34 @@ void set_freq(int chan, float f);
 void enable_portsNathan(void) {
     // Only enable port C for the keypad
     RCC->AHBENR |= RCC_AHBENR_GPIOCEN;
-    GPIOC->MODER &= ~0xffff;
-    GPIOC->MODER |= 0x55 << (4*2);
-    GPIOC->OTYPER &= ~0xff;
-    GPIOC->OTYPER |= 0xf0;
-    GPIOC->PUPDR &= ~0xff;
-    GPIOC->PUPDR |= 0x55;
+    GPIOC -> MODER &= 0xffff0000; 
+    GPIOC -> MODER |= 0x00005500;
+    GPIOC -> PUPDR |= 0x000000aa; 
+    // GPIOC->MODER &= ~0xffff;
+    // GPIOC->MODER |= 0x55 << (4*2);
+    // GPIOC->OTYPER &= ~0xff;
+    // GPIOC->OTYPER |= 0xf0;
+    // GPIOC->PUPDR &= ~0xff;
+    // GPIOC->PUPDR |= 0x55;
 }
 
-int scoree = 0;
+int scoree = 1;
 int currentLevel = 1;
 char curScore[9];
 uint8_t col; // the column being scanned
 
-void drive_column(int);   // energize one of the column outputs
-int  read_rows();         // read the four row inputs
-void update_history(int col, int rows); // record the buttons of the driven column
-char get_key_event(void); // wait for a button event (press or release)
-char get_keypress(void);  // wait for only a button press event.
+void drive_column(int c);
+int read_rows();   // energize one of the column outputs
+//int  read_rows();         // read the four row inputs
+// void update_history(int col, int rows); // record the buttons of the driven column
+// char get_key_event(void); // wait for a button event (press or release)
+// char get_keypress(void);  // wait for only a button press event.
 float getfloat(void);     // read a floating-point number from keypad
+void handle_key(char key, int* left, int* right);
 void show_keys(void);     // demonstrate get_key_event()
 void print(const char str[]);
 void update_game_speed(int scoree);
+char rows_to_key(int rows);
 
 
 //===========================================================================
@@ -845,13 +851,23 @@ extern const char font[];
 void small_delay(void) {
     nano_wait(50000);
 }
-
+int left = 0;
+int right = 0;
 
 // void TIM15_IRQHandler(void)
 // {
 //     TIM15->SR &= ~TIM_SR_UIF;
 //     int rows = read_rows();
-//     update_history(0, rows);
+//     if (rows != 0)
+//     {
+//         char newKey = rows_to_key(rows);
+//         handle_key(newKey, &left, &right);
+//     }
+//     snprintf(curScore, 9, "%8s", "LEUEL   ");
+//     print(curScore);
+//     nano_wait(1000000000 / 4);
+//     // int rows = read_rows();
+//     // update_history(0, rows);
 //     //col = (col + 1) & 3;
 //     //col = 0;
 //     //drive_column(col);
@@ -887,31 +903,24 @@ void TIM7_IRQHandler(void)
     // update_history(col, rows, &left, &right);
     // col = (col + 1) & 3;
     // drive_column(col);
-    //char pressedKey = get_keypress();
-    int right = 0;
-    int left = 0;
-    // if(pressedKey == '1')
-    // {
-    //     left = 1;
-    //     right = 0;
-    // }
-    // else if(pressedKey == 'A')
-    // {
-    //     right = 1;
-    //     left = 0;
-    // }
-    // else
-    // {
-    //     right = 0;
-    //     left = 0;
-    // }
+    int rows = read_rows();
+    if (rows != 0)
+    {
+        char newKey = rows_to_key(rows);
+        handle_key(newKey, &left, &right);
+    }
+    else
+    {
+        right = 0;
+        left = 0;
+    }
 
 
     scoree++;
     snprintf(curScore, 9, "%8d", scoree);
     print(curScore);
     // set_freq(0, 10000);
-    if(scoree == 120)
+    if(scoree % 50 == 0)
     {
         TIM7->CR1 &= ~TIM_CR1_CEN; //Stop main game system
         // nano_wait(500000000);
@@ -924,9 +933,7 @@ void TIM7_IRQHandler(void)
         nano_wait(1000000000 / 4);
         snprintf(curScore, 9, "%8s", "UP      ");
         print(curScore);
-        nano_wait(1000000000 / 4);
-        snprintf(curScore, 9, "%8s", "UP      ");
-        print(curScore);
+        nano_wait(1000000000 /2);
         currentLevel++;
         update_game_speed(currentLevel);
         //playSound();
@@ -959,11 +966,16 @@ void update_game_speed(int level) {  //Updtes the game speed
     
     if (level == 1) {
         TIM7->PSC = 24000 - 1;  // Example values for level 1
-        TIM7 -> ARR = 50 - 1;
+        TIM7 -> ARR = 80 - 1;
+    }
+    else if(level == 2)
+    {
+        TIM7->PSC = 24000 - 1;  // Example values for level 1
+        TIM7 -> ARR = 60 - 1;
     }
     else {
         TIM7->PSC = 24000 - 1;  // Higher frequency by reducing PSC
-        TIM7->ARR = 1000 - 1;
+        TIM7->ARR = 40 - 1;
     }
 
 }
@@ -1267,58 +1279,10 @@ int main(void) {
     //init_tim15();
     //show_keys();
     init_wavetable();
+    drive_column(0);
     init_tim6();
 
-    setup_tim1();
-    // shiftDownPieces(current_state);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-
-
-
-    
-    // runGameUpdate(0,0,floorBlocks, currentPiece);
-    // runGameUpdate(0,0,floorBlocks, currentPiece);
-    // runGameUpdate(0,0,floorBlocks, currentPiece);
-    // runGameUpdate(0,0,floorBlocks, currentPiece);
-    //int floorBlocks[10][13];
-    // runGameUpdate(1,0,floorBlocks,currentPiece);
-    
+    setup_tim1();    
 
 
     while (1) {
