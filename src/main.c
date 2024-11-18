@@ -400,10 +400,13 @@
 // }
 
 #include "stm32f0xx.h"
+#include <string.h> 
+#include <stdio.h>
+#include <math.h>   // for M_PI
 #include <stdint.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <time.h>
+
 
 // Define the TFT width and height
 #define TFT_WIDTH  240
@@ -423,6 +426,32 @@
 #define TFT_DC_LOW()    (GPIOA->BSRR = GPIO_BSRR_BR_1)    // Set DC low
 #define TFT_RST_HIGH()  (GPIOA->BSRR = GPIO_BSRR_BS_2)    // Set RESET high
 #define TFT_RST_LOW()   (GPIOA->BSRR = GPIO_BSRR_BR_2)    // Set RESET low
+
+    int floorBlocks[10][13] = {
+        {0},
+        {0},
+        {1},
+        {1},
+        {1},
+        {1},
+        {1,1,1,1,},
+        {1,1},
+        {1,1},
+        {1}
+    };
+    int currentPiece[10][13] = {
+        {0},
+        {0},
+        {0},
+        {0},
+        {0,0,0,0,0,0,0,0,0,0,1,1,1},
+        {0,0,0,0,0,0,0,0,0,0,1},
+        {0},
+        {0},
+        {0},
+        {0}
+    };
+    int r = 0;
 
 void enable_ports(void) {
     // Enable GPIOA and GPIOB for control pins and SPI
@@ -769,6 +798,424 @@ int runGameUpdate(int left, int right, int floorBlocks[10][13], int currentPiece
 }
 
 
+
+void set_char_msg(int, char);
+void nano_wait(unsigned int);
+void internal_clock();
+void playSound();
+void set_freq(int chan, float f);
+
+//===========================================================================
+// Configure GPIOC
+//===========================================================================
+void enable_portsNathan(void) {
+    // Only enable port C for the keypad
+    RCC->AHBENR |= RCC_AHBENR_GPIOCEN;
+    GPIOC->MODER &= ~0xffff;
+    GPIOC->MODER |= 0x55 << (4*2);
+    GPIOC->OTYPER &= ~0xff;
+    GPIOC->OTYPER |= 0xf0;
+    GPIOC->PUPDR &= ~0xff;
+    GPIOC->PUPDR |= 0x55;
+}
+
+int scoree = 0;
+int currentLevel = 1;
+char curScore[9];
+uint8_t col; // the column being scanned
+
+void drive_column(int);   // energize one of the column outputs
+int  read_rows();         // read the four row inputs
+void update_history(int col, int rows); // record the buttons of the driven column
+char get_key_event(void); // wait for a button event (press or release)
+char get_keypress(void);  // wait for only a button press event.
+float getfloat(void);     // read a floating-point number from keypad
+void show_keys(void);     // demonstrate get_key_event()
+void print(const char str[]);
+void update_game_speed(int scoree);
+
+
+//===========================================================================
+// Bit Bang SPI LED Array
+//===========================================================================
+int msg_index = 0;
+uint16_t msg[8] = { 0x0000,0x0100,0x0200,0x0300,0x0400,0x0500,0x0600,0x0700 };
+extern const char font[];
+
+void small_delay(void) {
+    nano_wait(50000);
+}
+
+
+// void TIM15_IRQHandler(void)
+// {
+//     TIM15->SR &= ~TIM_SR_UIF;
+//     int rows = read_rows();
+//     update_history(0, rows);
+//     //col = (col + 1) & 3;
+//     //col = 0;
+//     //drive_column(col);
+// }
+
+// void init_tim15(void) {
+//     RCC -> APB2ENR |= 0x00010000;
+//     TIM15 -> DIER |= 0x00000100;
+//     TIM15 -> PSC = 4800000 - 1;
+//     TIM15 -> ARR = 50 - 1;
+//     NVIC -> ISER[0] = 1 << TIM15_IRQn;
+//     TIM15 -> CR1 |= 0x00000001;
+
+// }
+
+void init_tim7(void) {
+  RCC->APB1ENR |= 0x00000020;
+   
+  TIM7 -> PSC = 4800000 - 1;
+  TIM7 -> ARR = 200 - 1;
+
+  TIM7 -> DIER |= TIM_DIER_UIE;
+
+  NVIC -> ISER[0] = 1 << TIM7_IRQn;
+
+  TIM7 -> CR1 |= TIM_CR1_CEN;
+}
+
+void TIM7_IRQHandler(void)
+{
+    TIM7->SR &= ~TIM_SR_UIF;
+    // int rows = read_rows();
+    // update_history(col, rows, &left, &right);
+    // col = (col + 1) & 3;
+    // drive_column(col);
+    //char pressedKey = get_keypress();
+    int right = 0;
+    int left = 0;
+    // if(pressedKey == '1')
+    // {
+    //     left = 1;
+    //     right = 0;
+    // }
+    // else if(pressedKey == 'A')
+    // {
+    //     right = 1;
+    //     left = 0;
+    // }
+    // else
+    // {
+    //     right = 0;
+    //     left = 0;
+    // }
+
+
+    scoree++;
+    snprintf(curScore, 9, "%8d", scoree);
+    print(curScore);
+    // set_freq(0, 10000);
+    if(scoree == 120)
+    {
+        TIM7->CR1 &= ~TIM_CR1_CEN; //Stop main game system
+        // nano_wait(500000000);
+        // set_freq(0, 200);
+        // nano_wait(500000000);
+        // set_freq(0, 900);
+        // nano_wait(500000000);
+        snprintf(curScore, 9, "%8s", "LEUEL   ");
+        print(curScore);
+        nano_wait(1000000000 / 4);
+        snprintf(curScore, 9, "%8s", "UP      ");
+        print(curScore);
+        nano_wait(1000000000 / 4);
+        snprintf(curScore, 9, "%8s", "UP      ");
+        print(curScore);
+        currentLevel++;
+        update_game_speed(currentLevel);
+        //playSound();
+        TIM7->CR1 |= TIM_CR1_CEN; //Resume timing system
+
+    }
+    int track = runGameUpdate(left,right,floorBlocks, currentPiece, &r);
+    if(track)
+    {
+       TIM7->CR1 &= ~TIM_CR1_CEN; 
+       while(1)
+       {
+        snprintf(curScore, 9, "%8s", "LOSER   ");
+        print(curScore);
+        nano_wait(1000000000 / 4);
+        snprintf(curScore, 9, "%8s", "SCORE   ");
+        print(curScore);
+        nano_wait(1000000000 / 4);
+        snprintf(curScore, 9, "%8d", scoree);
+        print(curScore);
+        nano_wait(1000000000 / 4);
+
+       }
+
+    }
+    
+}
+
+void update_game_speed(int level) {  //Updtes the game speed
+    
+    if (level == 1) {
+        TIM7->PSC = 24000 - 1;  // Example values for level 1
+        TIM7 -> ARR = 50 - 1;
+    }
+    else {
+        TIM7->PSC = 24000 - 1;  // Higher frequency by reducing PSC
+        TIM7->ARR = 1000 - 1;
+    }
+
+}
+
+
+void playSound() {
+    set_freq(0, 400);
+    nano_wait(50000000); // Use a timer-based delay for better consistency
+    set_freq(0, 600);
+    nano_wait(50000000);
+    set_freq(0, 900);
+    nano_wait(50000000);
+    set_freq(0, 440);
+    nano_wait(50000000);
+    set_freq(0, 600);
+    nano_wait(50000000);
+    set_freq(0, 0); // Ensure sound is stopped after playing
+}
+
+
+void setup_tim1(void) {
+    // Generally the steps are similar to those in setup_tim3
+    // except we will need to set the MOE bit in BDTR. 
+    // Be sure to do so ONLY after enabling the RCC clock to TIM1.
+
+    // Enable clocks
+    RCC->APB2ENR |= RCC_APB2ENR_TIM1EN;
+    RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
+
+    //PA8-11 being set to 10 for alternative funtion mode
+    GPIOA -> MODER &= ~0x00ff0000;
+    GPIOA -> MODER |= 0x00aa0000;
+
+    //Set GPIOA8-11, contingent on last one working
+    // GPIOA->AFRH_AFR2[3:0] = 0001;
+    // GPIOA->AFRH_AFR3[3:0] = 0001;
+    // GPIOA->AFRH_AFR0[3:0] = 0001;
+    // GPIOA->AFRH_AFR1[3:0] = 0001;
+
+    GPIOA-> AFR[1] &= ~0x0000ffff;
+    GPIOA-> AFR[1] |= 0x00002222;
+
+    //Set MOE
+    TIM1 -> BDTR |= 0x8000;
+
+    //Set freq
+    TIM1 -> PSC = 1 - 1;
+    TIM1 -> ARR = 2400 - 1;
+
+    //Enable channel outputs
+    TIM1 -> CCMR1 &= 0x8f8f;
+    TIM1 -> CCMR1 |= 0x6060;
+    TIM1 -> CCMR2 &= 0x878f;
+    TIM1 -> CCMR2 |= 0x6860;
+    //Enabled the OC4CE in channel 4
+    TIM1 -> CCER |= TIM_CCER_CC3E | TIM_CCER_CC4E | TIM_CCER_CC2E | TIM_CCER_CC1E;
+
+    //enable timer
+    TIM1 -> CR1 |= TIM_CR1_CEN;
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
+// Part 3: Analog-to-digital conversion for a volume level.
+uint32_t volume = 2400;
+
+// Variables for boxcar averaging.
+#define BCSIZE 32
+int bcsum = 0;
+int boxcar[BCSIZE];
+int bcn = 0;
+
+void dialer(void);
+
+// Parameters for the wavetable size and expected synthesis rate.
+#define N 1000
+#define RATE 20000
+short int wavetable[N];
+int step0 = 0;
+int offset0 = 0;
+int step1 = 0;
+int offset1 = 0;
+
+
+
+// void init_tim15(void) {
+//     RCC -> APB2ENR |= 0x00010000;
+//     TIM15 -> DIER |= 0x00000100;
+//     TIM15 -> PSC = 24000 - 1;
+//     TIM15 -> ARR = 2 - 1;
+//     TIM15 -> CR1 |= 0x00000001;
+
+// }
+
+uint8_t col; // the column being scanned
+
+// void drive_column(int);   // energize one of the column outputs
+// int  read_rows();         // read the four row inputs
+// void update_history(int col, int rows); // record the buttons of the driven column
+// char get_key_event(void); // wait for a button event (press or release)
+// char get_keypress(void);  // wait for only a button press event.
+// float getfloat(void);     // read a floating-point number from keypad
+// void show_keys(void);     // demonstrate get_key_event()
+
+void TIM6_DAC_IRQHandler(void)
+    {
+        TIM6 -> SR &= ~TIM_SR_UIF;
+        offset0 += step0;
+        offset1 += step1;
+        if (offset0 >= (N << 16))
+            offset0 -= (N << 16);
+        if (offset1 >= (N << 16))
+            offset1 -= (N << 16);
+
+        int samp = wavetable[offset0>>16] + wavetable[offset1>>16];
+        int sample = ((samp * volume)>>18) + 1200;
+        // samp *= volume;TIM1_CCR4 
+        // samp = samp >> 17;
+        // samp += 2048;
+        TIM1 -> CCR4  = sample;
+    }
+
+
+void init_tim6(void) {
+    RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
+   
+    // TIM6 -> PSC = (24000 / (RATE)) - 1;
+    // TIM6 -> ARR = 2 - 1;
+
+    TIM6 -> PSC = 48 - 1;
+    TIM6 -> ARR = 1000000 / RATE - 1;
+
+    TIM6 -> DIER |= TIM_DIER_UIE;
+
+    NVIC -> ISER[0] = 1 << TIM6_DAC_IRQn;
+
+    //TIM6 -> CR2 |= 0x00000020;
+    //Bits 6-4 = 001
+
+    TIM6 -> CR1 |= TIM_CR1_CEN;
+}
+
+
+void init_wavetable(void) {
+    for(int i=0; i < N; i++)
+        wavetable[i] = 32767 * sin(2 * M_PI * i / N);
+}
+
+void set_freq(int chan, float f) {
+    if (chan == 0) {
+        if (f == 0.0) {
+            step0 = 0;
+            offset0 = 0;
+        } else
+            step0 = (f * N / RATE) * (1<<16);
+    }
+    if (chan == 1) {
+        if (f == 0.0) {
+            step1 = 0;
+            offset1 = 0;
+        } else
+            step1 = (f * N / RATE) * (1<<16);
+    }
+}
+
+void init_spi1(void) {
+     RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
+        GPIOA -> MODER &= ~0xc000cc00;
+        GPIOA->MODER |= 0x80008800;// << (4*6); //Set 5, 7, 15 to alternative function
+        GPIOA -> AFR[1] &= ~0xf0000000;
+        GPIOA -> AFR[0] &= ~0xf0f00000;
+        RCC -> APB2ENR |= RCC_APB2ENR_SPI1EN;
+    SPI1 -> CR1 &= ~(0x1 << 6);
+    // Set the baud rate as low as possible (maximum divisor for BR).
+    SPI1 -> CR1 |= 0x7 << 3; //For bits 3-5 = 1
+// Configure the interface for a 8-bit word size.
+    
+    SPI1->CR2 = (0xF << 8); // Set 11-8 to 1001
+// Configure the SPI channel to be in "master configuration".
+    SPI1 -> CR1 |= 0x1 << 2; //Set bit 2 to 1
+// Set the SS Output enable bit and enable NSSP.
+    SPI1 -> CR2 |= 0x3 << 2; //Set 2nd and 3rd bit to 1
+// Set the TXDMAEN bit to enable DMA transfers on transmit buffer empty
+    SPI1 -> CR2 |= 0x1 << 1; // Set 1st bit to 1
+// Enable the SPI channel.
+    SPI1 -> CR1 |= 0x1 << 6; //Set bit 6 to 1
+
+}
+
+
+void spi1_setup_dma(void) {
+    
+    //Turn off enable
+    DMA1_Channel3 -> CCR &= ~DMA_CCR_EN;
+    //0xfffffffe
+
+    //Activate
+    RCC -> AHBENR |= RCC_AHBENR_DMA1EN;
+    //CMAR
+    DMA1_Channel3 -> CMAR = (uint32_t) &msg;
+    //CPAR
+    DMA1_Channel3 -> CPAR = (uint32_t) &(SPI1->DR);
+    //CNDTR
+    DMA1_Channel3 -> CNDTR = 8;
+    //DIR
+     DMA1_Channel3 -> CCR |= DMA_CCR_DIR;//page 209 manual
+    //0x00000010
+
+    //MINC
+    DMA1_Channel3 -> CCR |= DMA_CCR_MINC;
+    DMA1_Channel3 -> CCR &= ~DMA_CCR_PINC;
+    //0x00000080
+
+    //Memory size
+    DMA1_Channel3 -> CCR |= DMA_CCR_MSIZE_0;
+    //0x00000400
+
+    //P datum
+    DMA1_Channel3 -> CCR |= DMA_CCR_PSIZE_0;
+    //0x00000100
+
+    //Circular mode
+
+    DMA1_Channel3 -> CCR |= DMA_CCR_CIRC;
+    //0x00000020
+
+    SPI1 -> CR2 |= 0x1 << 1; //Sets bit 1
+
+
+
+}
+
+
+
+//===========================================================================
+// Enable the DMA channel.
+//===========================================================================
+void spi1_enable_dma(void) {
+    DMA1_Channel3 -> CCR |= 0x00000001;
+}
+
+
 int main(void) {
     enable_ports();    // Enable GPIO ports for control pins
     init_spi();        // Initialize SPI peripheral
@@ -797,76 +1244,70 @@ int main(void) {
     //     {1,0,1,0,1,0,1,0,1,0,1,0,1},
     //     {0,1,0,1,0,1,0,1,0,1,0,1,0}
     // };
-    int floorBlocks[10][13] = {
-        {0},
-        {0},
-        {1},
-        {1},
-        {1},
-        {1},
-        {1,1,1,1,},
-        {1,1},
-        {1,1},
-        {1}
-    };
-    int currentPiece[10][13] = {
-        {0},
-        {0},
-        {0},
-        {0},
-        {0,0,0,0,0,0,0,0,0,0,1,1,1},
-        {0,0,0,0,0,0,0,0,0,0,1},
-        {0},
-        {0},
-        {0},
-        {0}
-    };
-    int r = 0;
     update_screen(floorBlocks);
     update_screen(currentPiece);
+    msg[0] |= font[' '];
+    msg[1] |= font[' '];
+    msg[2] |= font[' '];
+    msg[3] |= font[' '];
+    msg[4] |= font[' '];
+    msg[5] |= font[' '];
+    msg[6] |= font[' '];
+    msg[7] |= font[' '];
+
+    // GPIO enable
+    enable_portsNathan();
+    // setup keyboard
+    init_tim7();
+
+
+    init_spi1();
+    spi1_setup_dma();
+    spi1_enable_dma();
+    //init_tim15();
+    //show_keys();
+    init_wavetable();
+    init_tim6();
+
+    setup_tim1();
     // shiftDownPieces(current_state);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    for (volatile int i = 0; i < 1000000; i++); // Delay
-    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    for (volatile int i = 0; i < 1000000; i++); // Delay
-    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    for (volatile int i = 0; i < 1000000; i++); // Delay
-    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    for (volatile int i = 0; i < 1000000; i++); // Delay
-    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    for (volatile int i = 0; i < 1000000; i++); // Delay
-    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,1,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
-    runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,1,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
+    // runGameUpdate(0,0,floorBlocks, currentPiece, &r);
 
 
 
@@ -883,11 +1324,4 @@ int main(void) {
     while (1) {
         // Loop infinitely - nothing else needs to be done here
     }
-<<<<<<< HEAD
 }
-=======
-}
-
-
-
->>>>>>> 529c888641e6ef64823b91c74cdc69b383d6c7d8

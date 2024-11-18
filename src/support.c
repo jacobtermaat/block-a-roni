@@ -93,7 +93,6 @@ void clear_display(void) {
         msg[i] = msg[i] & 0xff00;
     }
 }
-
 // 16 history bytes.  Each byte represents the last 8 samples of a button.
 uint8_t hist[16];
 char queue[2];  // A two-entry queue of button press/release events.
@@ -157,16 +156,6 @@ char get_keypress() {
     return event & 0x7f;
 }
 
-void show_keys(void)
-{
-    char buf[] = "        ";
-    for(;;) {
-        char event = get_key_event();
-        memmove(buf, &buf[1], 7);
-        buf[7] = event;
-        print(buf);
-    }
-}
 
 // Turn on the dot of the rightmost display element.
 void dot()
